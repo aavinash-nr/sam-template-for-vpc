@@ -1,0 +1,184 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  AWS CloudFormation template to create a VPC with public and private subnets,
+  an Internet Gateway, and a NAT Gateway, using dynamic Availability Zones.
+
+Resources:
+  # VPC
+  CustomTestVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 18.0.0.0/20
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: custom-test-vpc
+
+  # Subnets
+  PublicSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref CustomTestVPC
+      CidrBlock: 18.0.0.0/23
+      AvailabilityZone: !Select [0, !GetAZs ''] # Dynamically selects the first AZ in the region
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: public-subnet-one
+
+  PrivateSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref CustomTestVPC
+      CidrBlock: 18.0.2.0/23
+      AvailabilityZone: !Select [0, !GetAZs ''] # Same AZ as PublicSubnetOne
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: private-subnet-one
+
+  PublicSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref CustomTestVPC
+      CidrBlock: 18.0.4.0/23
+      AvailabilityZone: !Select [1, !GetAZs ''] # Dynamically selects the second AZ in the region
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: public-subnet-two
+
+  PrivateSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref CustomTestVPC
+      CidrBlock: 18.0.6.0/23
+      AvailabilityZone: !Select [1, !GetAZs ''] # Same AZ as PublicSubnetTwo
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: private-subnet-two
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: custom-igw
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref CustomTestVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref CustomTestVPC
+      Tags:
+        - Key: Name
+          Value: public-route-table
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway # Ensure IGW is attached before creating route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  # Public Subnet Associations
+  PublicSubnetOneRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetOne
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetTwoRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetTwo
+      RouteTableId: !Ref PublicRouteTable
+
+  # EIP for NAT Gateway
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc # EIP for use with a NAT Gateway in a VPC
+      Tags:
+        - Key: Name
+          Value: nat-gateway-eip
+
+  # NAT Gateway
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnetOne # NAT Gateway should be in a public subnet (first AZ)
+      Tags:
+        - Key: Name
+          Value: custom-nat-gw
+    DependsOn: # Ensure IGW is attached and public route exists before creating NAT GW
+      - AttachGateway
+      - PublicDefaultRoute
+
+
+  # Private Route Table
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref CustomTestVPC
+      Tags:
+        - Key: Name
+          Value: private-route-table
+
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  # Private Subnet Associations
+  PrivateSubnetOneRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetOne
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetTwoRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetTwo
+      RouteTableId: !Ref PrivateRouteTable
+
+Outputs:
+  VPCId:
+    Description: ID of the created VPC
+    Value: !Ref CustomTestVPC
+  PublicSubnetOneId:
+    Description: ID of Public Subnet One
+    Value: !Ref PublicSubnetOne
+  PublicSubnetOneAZ:
+    Description: Availability Zone of Public Subnet One
+    Value: !GetAtt PublicSubnetOne.AvailabilityZone
+  PublicSubnetTwoId:
+    Description: ID of Public Subnet Two
+    Value: !Ref PublicSubnetTwo
+  PublicSubnetTwoAZ:
+    Description: Availability Zone of Public Subnet Two
+    Value: !GetAtt PublicSubnetTwo.AvailabilityZone
+  PrivateSubnetOneId:
+    Description: ID of Private Subnet One
+    Value: !Ref PrivateSubnetOne
+  PrivateSubnetTwoId:
+    Description: ID of Private Subnet Two
+    Value: !Ref PrivateSubnetTwo
+  NatGatewayEIPAddress:
+    Description: Public IP address of the NAT Gateway
+    Value: !Ref NatGatewayEIP
